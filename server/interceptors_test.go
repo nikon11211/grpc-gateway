@@ -1,0 +1,108 @@
+package server
+
+import (
+	"context"
+	"log/slog"
+	"os"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+)
+
+func TestLoggingInterceptor(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	interceptor := loggingInterceptor(logger)
+
+	handler := func(ctx context.Context, req any) (any, error) {
+		return "response", nil
+	}
+
+	info := &grpc.UnaryServerInfo{FullMethod: "/test.Service/Method"}
+
+	resp, err := interceptor(context.Background(), "request", info, handler)
+	assert.NoError(t, err)
+	assert.Equal(t, "response", resp)
+}
+
+func TestLoggingInterceptorError(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	interceptor := loggingInterceptor(logger)
+
+	handler := func(ctx context.Context, req any) (any, error) {
+		return nil, status.Error(codes.Internal, "test error")
+	}
+
+	info := &grpc.UnaryServerInfo{FullMethod: "/test.Service/Method"}
+
+	resp, err := interceptor(context.Background(), "request", info, handler)
+	assert.Error(t, err)
+	assert.Nil(t, resp)
+}
+
+func TestMetricsInterceptorSuccess(t *testing.T) {
+	metrics := NewMetricsRegistry("test_service1")
+
+	interceptor := metricsInterceptor(metrics)
+
+	handler := func(ctx context.Context, req any) (any, error) {
+		return "response", nil
+	}
+
+	info := &grpc.UnaryServerInfo{FullMethod: "/test.Service/Success"}
+
+	resp, err := interceptor(context.Background(), "request", info, handler)
+	assert.NoError(t, err)
+	assert.Equal(t, "response", resp)
+}
+
+func TestMetricsInterceptorError(t *testing.T) {
+	metrics := NewMetricsRegistry("test_service2")
+
+	interceptor := metricsInterceptor(metrics)
+
+	handler := func(ctx context.Context, req any) (any, error) {
+		return nil, status.Error(codes.NotFound, "not found")
+	}
+
+	info := &grpc.UnaryServerInfo{FullMethod: "/test.Service/Error"}
+
+	resp, err := interceptor(context.Background(), "request", info, handler)
+	assert.Error(t, err)
+	assert.Nil(t, resp)
+}
+
+func TestMetricsInterceptorUnknownError(t *testing.T) {
+	metrics := NewMetricsRegistry("test_service3")
+
+	interceptor := metricsInterceptor(metrics)
+
+	handler := func(ctx context.Context, req any) (any, error) {
+		return nil, assert.AnError
+	}
+
+	info := &grpc.UnaryServerInfo{FullMethod: "/test.Service/UnknownError"}
+
+	resp, err := interceptor(context.Background(), "request", info, handler)
+	assert.Error(t, err)
+	assert.Nil(t, resp)
+}
+
+func TestTracingInterceptor(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.MetricsAddress = ":9115"
+
+	interceptor := tracingInterceptor(cfg)
+
+	handler := func(ctx context.Context, req any) (any, error) {
+		return "response", nil
+	}
+
+	info := &grpc.UnaryServerInfo{FullMethod: "/test.Service/Traced"}
+
+	resp, err := interceptor(context.Background(), "request", info, handler)
+	assert.NoError(t, err)
+	assert.Equal(t, "response", resp)
+}
