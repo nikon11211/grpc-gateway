@@ -47,6 +47,7 @@ type Server struct {
 	grpcListener    net.Listener
 	httpListener    net.Listener
 	metricsListener net.Listener
+	metricsMu       sync.Mutex
 	metricsEcho     *echo.Echo
 	*slog.Logger
 }
@@ -290,7 +291,9 @@ func (s *Server) Start() error {
 	metricsEcho := echo.New()
 	metricsEcho.HideBanner = true
 	metricsEcho.Listener = s.metricsListener
+	s.metricsMu.Lock()
 	s.metricsEcho = metricsEcho
+	s.metricsMu.Unlock()
 	metricsEcho.GET("/metrics", echoprometheus.NewHandlerWithConfig(
 		echoprometheus.HandlerConfig{
 			Gatherer: s.metrics.GetRegistry(),
@@ -323,8 +326,11 @@ func (s *Server) Stop(ctx context.Context) error {
 
 	s.GRPCServer.GracefulStop()
 
-	if s.metricsEcho != nil {
-		_ = s.metricsEcho.Shutdown(ctx)
+	s.metricsMu.Lock()
+	me := s.metricsEcho
+	s.metricsMu.Unlock()
+	if me != nil {
+		_ = me.Shutdown(ctx)
 	}
 
 	if err := s.EchoServer.Shutdown(ctx); err != nil {

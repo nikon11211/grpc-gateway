@@ -109,6 +109,14 @@ func TestTracingInterceptor(t *testing.T) {
 	assert.Equal(t, "response", resp)
 }
 
+type testRequestWithID struct {
+	requestID string
+}
+
+func (r *testRequestWithID) GetRquid() string {
+	return r.requestID
+}
+
 func TestTracingInterceptorWithSpan(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.MetricsAddress = ":9118"
@@ -127,6 +135,16 @@ func TestTracingInterceptorWithSpan(t *testing.T) {
 		defer span.End()
 
 		resp, err := interceptor(trace.ContextWithSpan(context.Background(), span), "request", info, handler)
+		assert.NoError(t, err)
+		assert.Equal(t, "response", resp)
+	})
+
+	t.Run("span with request id", func(t *testing.T) {
+		_, span := tracer.Start(context.Background(), "op")
+		defer span.End()
+
+		req := &testRequestWithID{requestID: "req-42"}
+		resp, err := interceptor(trace.ContextWithSpan(context.Background(), span), req, info, handler)
 		assert.NoError(t, err)
 		assert.Equal(t, "response", resp)
 	})
