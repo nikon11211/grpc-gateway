@@ -163,6 +163,28 @@ func TestConfigValidation(t *testing.T) {
 			wantErr: true,
 			errMsg:  "Key: 'Config.RateLimit.Burst' Error:Field validation for 'Burst' failed on the 'required' tag",
 		},
+		{
+			name: "negative rate limit",
+			cfg: func() *Config {
+				c := DefaultConfig()
+				c.RateLimit.Limit = -1
+				c.MetricsAddress = ":9116"
+				return c
+			}(),
+			wantErr: true,
+			errMsg:  "rate limit must be positive",
+		},
+		{
+			name: "negative rate limit burst",
+			cfg: func() *Config {
+				c := DefaultConfig()
+				c.RateLimit.Burst = -1
+				c.MetricsAddress = ":9117"
+				return c
+			}(),
+			wantErr: true,
+			errMsg:  "rate limit burst must be positive",
+		},
 	}
 
 	for _, tt := range tests {

@@ -1,7 +1,7 @@
 package server
 
 import (
-	"fmt"
+	"errors"
 	"time"
 
 	"github.com/go-playground/validator/v10"
@@ -61,38 +61,26 @@ func (c Config) Validate() error {
 	if err := validator.New().Struct(c); err != nil {
 		return err
 	}
-	if c.Service == "" {
-		return fmt.Errorf("service name is required")
-	}
-	if c.HttpAddress == "" {
-		return fmt.Errorf("http address is required")
-	}
-	if c.GrpcAddress == "" {
-		return fmt.Errorf("grpc address is required")
-	}
-	if c.MetricsAddress == "" {
-		return fmt.Errorf("metrics address is required")
-	}
 	if c.IdleTimeout <= 0 {
-		return fmt.Errorf("idle timeout must be positive")
+		return errors.New("idle timeout must be positive")
 	}
 	if c.ReadTimeout <= 0 {
-		return fmt.Errorf("read timeout must be positive")
+		return errors.New("read timeout must be positive")
 	}
 	if c.WriteTimeout <= 0 {
-		return fmt.Errorf("write timeout must be positive")
+		return errors.New("write timeout must be positive")
 	}
 	if c.ShutdownTimeout <= 0 {
-		return fmt.Errorf("shutdown timeout must be positive")
+		return errors.New("shutdown timeout must be positive")
 	}
 	if c.MaxRecvMsgSize <= 0 {
-		return fmt.Errorf("max recv msg size must be positive")
+		return errors.New("max recv msg size must be positive")
 	}
 	if c.RateLimit.Limit <= 0 {
-		return fmt.Errorf("rate limit must be positive")
+		return errors.New("rate limit must be positive")
 	}
 	if c.RateLimit.Burst <= 0 {
-		return fmt.Errorf("rate limit burst must be positive")
+		return errors.New("rate limit burst must be positive")
 	}
 	return nil
 }

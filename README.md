@@ -15,11 +15,14 @@
   <a href="https://codecov.io/gh/nikon11211/grpc-gateway">
     <img src="https://codecov.io/gh/nikon11211/grpc-gateway/branch/main/graph/badge.svg" alt="Coverage"/>
   </a>
+  <a href="https://sonarcloud.io/summary/overall?id=nikon11211_grpc-gateway">
+    <img src="https://sonarcloud.io/api/project_badges/measure?project=nikon11211_grpc-gateway&metric=coverage" alt="SonarCloud Coverage"/>
+  </a>
   <a href="https://opensource.org/licenses/MIT">
     <img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"/>
   </a>
   <a href="https://golang.org/">
-    <img src="https://img.shields.io/badge/Go-%3E%3D%201.21-blue" alt="Go Version"/>
+    <img src="https://img.shields.io/badge/Go-%3E%3D%201.26-blue" alt="Go Version"/>
   </a>
 </p>
 
@@ -212,27 +215,6 @@ return next(c)
 )
 ```
 
-### Distributed Tracing with OpenTelemetry
-
-```go
-import (
-    "go.opentelemetry.io/otel"
-    "go.opentelemetry.io/otel/trace"
-)
-
-func handleOrder(ctx context.Context, orderID string) {
-    tracer := otel.Tracer("order-service")
-    ctx, span := tracer.Start(ctx, "handleOrder")
-    defer span.End()
-    
-    // TraceID and SpanID automatically injected into logs
-    log.InfoCtx(ctx, "Processing order")
-    
-    // All downstream logs will include trace context
-    processPayment(ctx, orderID)
-}
-```
-
 ## 🔧 Configuration Reference
 
 ```go
@@ -256,19 +238,32 @@ Time                time.Duration   // gRPC keepalive ping interval
 }
 ```
 
-## 🧪 Testing
+## 🧪 Testing & Benchmarks
+
+The library reaches **100.0% statement coverage** in the `server` package
+(race-enabled, atomic cover mode, `examples/` excluded) — tests run against
+in-memory gRPC/echo servers, so no live infrastructure is required.
 
 ```go
 // Run all tests
 go test ./...
 
-// Run with race detection
-go test -race ./...
- 
-// Run with coverage
-go test -coverprofile=coverage.txt ./...
-go tool cover -html=coverage.txt
+// Run with race detection and coverage (excluding examples)
+go test -race -coverprofile=coverage.txt -covermode=atomic $(go list ./... | grep -v /examples)
+go tool cover -func=coverage.txt | tail -3
+
+// Run benchmarks
+go test -bench=. -benchmem -run '^$' ./server
 ```
+
+| Benchmark                  | What it measures                          |
+|----------------------------|-------------------------------------------|
+| `BenchmarkExtractMethod`   | gRPC method path → handler extraction     |
+| `BenchmarkConfigValidate`  | Config validation                         |
+| `BenchmarkServerNew`       | Server construction                       |
+| `BenchmarkServerNewWithGRPCOption` | Server construction with gRPC options |
+| `BenchmarkLoggingInterceptor` | Logging interceptor on a single RPC     |
+| `BenchmarkMetricsInterceptor` | Metrics interceptor on a single RPC     |
 
 ## 🤝 Contributing
 

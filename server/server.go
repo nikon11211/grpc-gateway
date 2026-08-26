@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -38,10 +39,15 @@ type Server struct {
 	EchoServer      *echo.Echo
 	config          *Config
 	groups          map[string]*Router
+	groupsMu        sync.Mutex
 	shutdownTimeout time.Duration
 	contextTimeout  time.Duration
 	rateLimitConfig middleware.RateLimiterConfig
 	metrics         *MetricsRegistry
+	grpcListener    net.Listener
+	httpListener    net.Listener
+	metricsListener net.Listener
+	metricsEcho     *echo.Echo
 	*slog.Logger
 }
 
@@ -212,7 +218,7 @@ func (s *Server) RegisterGRPCServices(registerFunc func(*grpc.Server)) {
 
 func (s *Server) RegisterHTTPGateway(ctx context.Context, registerFunc func(context.Context, *runtime.ServeMux, string, []grpc.DialOption) error) error {
 	if s == nil {
-		return fmt.Errorf("server is nil")
+		return errors.New("server is nil")
 	}
 
 	mux := runtime.NewServeMux(
@@ -234,40 +240,74 @@ func (s *Server) RegisterHTTPGateway(ctx context.Context, registerFunc func(cont
 	return nil
 }
 
-func (s *Server) Start() error {
-	if s == nil {
-		return fmt.Errorf("server is nil")
+func (s *Server) bindListeners() error {
+	if s.grpcListener == nil {
+		lis, err := net.Listen("tcp", s.grpcPort)
+		if err != nil {
+			return fmt.Errorf("failed to listen on gRPC port: %w", err)
+		}
+		s.grpcListener = lis
 	}
 
-	lis, err := net.Listen("tcp", s.grpcPort)
-	if err != nil {
-		return fmt.Errorf("failed to listen on gRPC port: %w", err)
+	if s.httpListener == nil {
+		lis, err := net.Listen("tcp", s.httpPort)
+		if err != nil {
+			_ = s.grpcListener.Close()
+			return fmt.Errorf("failed to listen on HTTP port: %w", err)
+		}
+		s.httpListener = lis
+	}
+
+	if s.metricsListener == nil {
+		lis, err := net.Listen("tcp", s.metricsAddress)
+		if err != nil {
+			_ = s.grpcListener.Close()
+			_ = s.httpListener.Close()
+			return fmt.Errorf("failed to listen on metrics port: %w", err)
+		}
+		s.metricsListener = lis
+	}
+
+	return nil
+}
+
+func (s *Server) Start() error {
+	if s == nil {
+		return errors.New("server is nil")
+	}
+
+	if err := s.bindListeners(); err != nil {
+		return err
 	}
 
 	go func() {
-		s.LogAttrs(context.Background(), slog.LevelDebug, fmt.Sprintf("gRPC server starting on %s", s.grpcPort))
-		if err := s.GRPCServer.Serve(lis); err != nil {
+		s.LogAttrs(context.Background(), slog.LevelDebug, fmt.Sprintf("gRPC server starting on %s", s.grpcListener.Addr()))
+		if err := s.GRPCServer.Serve(s.grpcListener); err != nil {
 			s.LogAttrs(context.Background(), slog.LevelDebug, fmt.Sprintf("gRPC server error: %v", err))
 		}
 	}()
 
-	go func() {
-		metricsEcho := echo.New()
-		metricsEcho.HideBanner = true
-		metricsEcho.GET("/metrics", echoprometheus.NewHandlerWithConfig(
-			echoprometheus.HandlerConfig{
-				Gatherer: s.metrics.GetRegistry(),
-			},
-		))
-		s.LogAttrs(context.Background(), slog.LevelDebug, fmt.Sprintf("Metrics server starting on %s", s.metricsAddress))
+	metricsEcho := echo.New()
+	metricsEcho.HideBanner = true
+	metricsEcho.Listener = s.metricsListener
+	s.metricsEcho = metricsEcho
+	metricsEcho.GET("/metrics", echoprometheus.NewHandlerWithConfig(
+		echoprometheus.HandlerConfig{
+			Gatherer: s.metrics.GetRegistry(),
+		},
+	))
 
-		if err := metricsEcho.Start(s.metricsAddress); err != nil && !errors.Is(err, http.ErrServerClosed) {
+	go func() {
+		s.LogAttrs(context.Background(), slog.LevelDebug, fmt.Sprintf("Metrics server starting on %s", s.metricsListener.Addr()))
+
+		if err := metricsEcho.Start(""); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			s.LogAttrs(context.Background(), slog.LevelDebug, fmt.Sprintf("Metrics server error: %v", err))
 		}
 	}()
 
-	s.LogAttrs(context.Background(), slog.LevelDebug, fmt.Sprintf("HTTP server starting on %s", s.httpPort))
-	return s.EchoServer.Start(s.httpPort)
+	s.LogAttrs(context.Background(), slog.LevelDebug, fmt.Sprintf("HTTP server starting on %s", s.httpListener.Addr()))
+	s.EchoServer.Listener = s.httpListener
+	return s.EchoServer.Start("")
 }
 
 func (s *Server) GetMetricsRegistry() *MetricsRegistry {
@@ -283,6 +323,10 @@ func (s *Server) Stop(ctx context.Context) error {
 
 	s.GRPCServer.GracefulStop()
 
+	if s.metricsEcho != nil {
+		_ = s.metricsEcho.Shutdown(ctx)
+	}
+
 	if err := s.EchoServer.Shutdown(ctx); err != nil {
 		return fmt.Errorf("error shutting down HTTP server: %w", err)
 	}
@@ -295,7 +339,9 @@ func (s *Server) AddRouter(name string) *Router {
 		return nil
 	}
 	group := &Router{name: name, Group: s.EchoServer.Group(name)}
+	s.groupsMu.Lock()
 	s.groups[name] = group
+	s.groupsMu.Unlock()
 	return group
 }
 

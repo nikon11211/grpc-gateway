@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"go.opentelemetry.io/otel/trace"
+	"go.opentelemetry.io/otel/trace/noop"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -105,4 +107,27 @@ func TestTracingInterceptor(t *testing.T) {
 	resp, err := interceptor(context.Background(), "request", info, handler)
 	assert.NoError(t, err)
 	assert.Equal(t, "response", resp)
+}
+
+func TestTracingInterceptorWithSpan(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.MetricsAddress = ":9118"
+
+	interceptor := tracingInterceptor(cfg)
+	handler := func(ctx context.Context, req any) (any, error) {
+		return "response", nil
+	}
+	info := &grpc.UnaryServerInfo{FullMethod: "/test.Service/Traced"}
+
+	tp := noop.NewTracerProvider()
+	tracer := tp.Tracer("test")
+
+	t.Run("span without request id", func(t *testing.T) {
+		_, span := tracer.Start(context.Background(), "op")
+		defer span.End()
+
+		resp, err := interceptor(trace.ContextWithSpan(context.Background(), span), "request", info, handler)
+		assert.NoError(t, err)
+		assert.Equal(t, "response", resp)
+	})
 }
